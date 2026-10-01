@@ -8,7 +8,13 @@ sealed interface PreviewContent {
     data class Web(val page: String) : PreviewContent
 
     /** Plain (optionally formatted) source, syntax highlighted. */
-    data class Source(val text: String, val lang: Lang, val formatted: Boolean) : PreviewContent
+    data class Source(
+        val text: String,
+        val lang: Lang,
+        val formatted: Boolean,
+        /** Shown as a strip above the source, e.g. when a JSON paste looks truncated. */
+        val note: String? = null,
+    ) : PreviewContent
 }
 
 /**
@@ -19,25 +25,42 @@ object Preview {
 
     private val SVG_TAG = Regex("<svg[\\s>/]", RegexOption.IGNORE_CASE)
 
-    fun renderModeFor(name: String, content: String): Boolean {
+    /**
+     * The kind to actually preview. The extension wins when it already means something
+     * renderable; otherwise the content is sniffed, because "copy from an AI chat into a
+     * .txt file" is the normal path and that file is usually an SVG or an HTML page.
+     */
+    fun effectiveKind(name: String, content: String): FileKind {
         val kind = FileTypes.kindOfFile(name)
+        if (kind == FileKind.HTML || kind == FileKind.SVG || kind == FileKind.XML) return kind
+        val sniffed = CodeExtract.sniffExt(content) ?: return kind
+        return FileTypes.kindOf(sniffed)
+    }
+
+    fun renderModeFor(name: String, content: String): Boolean {
+        val kind = effectiveKind(name, content)
         return when (kind) {
             FileKind.HTML -> true
-            FileKind.SVG -> SVG_TAG.containsMatchIn(content) || content.contains("<svg", true)
+            FileKind.SVG -> content.isBlank() || SVG_TAG.containsMatchIn(content) || content.contains("<svg", true)
             FileKind.XML -> content.contains("<svg", true)
             else -> false
         }
     }
 
     fun build(name: String, content: String, dark: Boolean): PreviewContent {
-        val kind = FileTypes.kindOfFile(name)
+        val kind = effectiveKind(name, content)
         return when {
             kind == FileKind.HTML -> PreviewContent.Web(wrapHtml(content, dark))
             kind == FileKind.SVG || (kind == FileKind.XML && content.contains("<svg", true)) ->
                 PreviewContent.Web(wrapMarkup(content, dark))
             kind == FileKind.JSON -> {
                 val pretty = TextFormat.prettyJson(content)
-                PreviewContent.Source(pretty ?: content, Lang.JSON, pretty != null)
+                PreviewContent.Source(
+                    pretty ?: content,
+                    Lang.JSON,
+                    pretty != null,
+                    if (pretty == null) "JSON 解析失败 · 内容可能被截断，已按原文显示" else null,
+                )
             }
             kind == FileKind.XML -> {
                 val pretty = TextFormat.prettyXml(content)

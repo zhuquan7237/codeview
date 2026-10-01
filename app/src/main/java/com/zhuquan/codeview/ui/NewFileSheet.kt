@@ -33,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.zhuquan.codeview.core.CodeExtract
 import com.zhuquan.codeview.core.FileTypes
 
 /**
@@ -153,8 +154,18 @@ fun NewFileSheet(
                 Pill(text = "粘贴剪贴板", selected = source == 2) {
                     source = 2
                     val clip = readClipboard(context)
-                    clipText = clip
-                    clipNote = if (clip.isBlank()) "剪贴板里没有文本" else "已读取 ${clip.length} 个字符"
+                    // AI answers arrive fenced: keep the code, drop the Markdown wrapper.
+                    val extracted = CodeExtract.extract(clip)
+                    clipText = extracted.code
+                    val guess = CodeExtract.guessExt(extracted.fenceLang, extracted.code)
+                    // Only guess the extension while the user has not chosen one themselves.
+                    if (!custom && base.isBlank() && FileTypes.PRESETS.contains(guess)) ext = guess
+                    clipNote = when {
+                        clip.isBlank() -> "剪贴板里没有文本"
+                        extracted.stripped ->
+                            "已提取代码块（忽略围栏与说明文字）· ${extracted.code.length} 字符 · 后缀 $guess"
+                        else -> "已读取 ${extracted.code.length} 个字符 · 后缀 $guess"
+                    }
                 }
             }
             clipNote?.let {

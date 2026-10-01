@@ -2,8 +2,11 @@ package com.zhuquan.codeview.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -36,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.zhuquan.codeview.core.CodeExtract
+import com.zhuquan.codeview.core.FileKind
 import com.zhuquan.codeview.core.FileTypes
 import com.zhuquan.codeview.core.Highlighter
 import com.zhuquan.codeview.core.Preview
@@ -86,6 +92,10 @@ fun EditorScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
+    // The platform code views are recreated on every tab switch: remember where we were.
+    var editScroll by remember(name) { mutableStateOf(0) }
+    var viewScroll by remember(name) { mutableStateOf(0) }
+    var renderIssue by remember(name, reloadKey) { mutableStateOf<String?>(null) }
 
     val kind = FileTypes.kindOfFile(name)
     val lang = langOf(kind)
@@ -118,6 +128,38 @@ fun EditorScreen(
     BackHandler { onBack() }
 
     val preview = remember(text, name, previewDark) { Preview.build(name, text, previewDark) }
+
+    // Content sniffing: a pasted SVG dropped into a .txt still gets rendered, and we say so.
+    val sniffedKind = remember(name, text) { Preview.effectiveKind(name, text) }
+    val sniffedExt = remember(sniffedKind) {
+        when (sniffedKind) {
+            FileKind.SVG -> "svg"
+            FileKind.HTML -> "html"
+            FileKind.XML -> "xml"
+            FileKind.JSON -> "json"
+            else -> null
+        }
+    }
+    val sniffed = mode == 1 && sniffedKind != kind && sniffedExt != null && preview is PreviewContent.Web
+
+    val hint: Hint? = when {
+        mode == 1 && renderIssue != null -> Hint(renderIssue!!, "回到编辑", { mode = 0 })
+        sniffed -> Hint("内容像 ${sniffedKind.badge}，已按 ${sniffedKind.badge} 预览", "另存为 .$sniffedExt") {
+            repo.write(name, text)
+            savedText = text
+            val target = FileTypes.composeName(name.substringBeforeLast('.', name), sniffedExt!!)
+            if (target != name && repo.rename(name, target)) {
+                name = target
+                onChanged()
+            }
+        }
+
+        else -> null
+    }
+
+    // Keeps the last hint painted while the strip animates away.
+    val shownHint = remember { mutableStateOf<Hint?>(null) }
+    SideEffect { if (hint != null) shownHint.value = hint }
 
     Column(
         Modifier
@@ -190,7 +232,14 @@ fun EditorScreen(
                             }
                             Pill("粘贴") {
                                 val clip = readClipboard(context)
-                                if (clip.isNotEmpty()) text = if (text.isBlank()) clip else text + "\n" + clip
+                                if (clip.isNotEmpty()) {
+                                    val ex = CodeExtract.extract(clip)
+                                    if (ex.stripped) toast(context, "已自动提取代码块，忽略说明文字")
+                                    val insert = if (text.isBlank()) ex.code else text + "\n" + ex.code
+                                    text = insert
+                                } else {
+                                    toast(context, "剪贴板是空的")
+                                }
                             }
                         } else {
                             Pill("重新渲染") { reloadKey++ }
@@ -199,6 +248,25 @@ fun EditorScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // ---- contextual hint strip -----------------------------------------
+        AnimatedVisibility(
+            visible = hint != null,
+            enter = fadeIn(tween(180)) + expandVertically(tween(200)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(160)),
+        ) {
+            shownHint.value?.let { h ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(h.message, color = pal.dim, fontSize = 11.5.sp, modifier = Modifier.weight(1f))
+                    Pill(h.action, onClick = h.onClick)
                 }
             }
         }
@@ -226,6 +294,8 @@ fun EditorScreen(
                         lang = lang,
                         pal = pal,
                         fontSize = fontSize,
+                        scrollY = editScroll,
+                        onScroll = { editScroll = it },
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -233,6 +303,16 @@ fun EditorScreen(
                         content = preview,
                         reloadKey = reloadKey,
                         background = if (previewDark) Color(0xFF0B1120) else Color.White,
+                        fontSize = fontSize,
+                        scrollY = viewScroll,
+                        onScroll = { viewScroll = it },
+                        onRenderInfo = { info ->
+                            renderIssue = when {
+                                info.jsError != null -> "脚本报错：${info.jsError}"
+                                info.looksEmpty -> "渲染区域为空 · 内容可能不完整或被截断"
+                                else -> null
+                            }
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -275,7 +355,13 @@ fun EditorScreen(
                 SheetAction("用剪贴板替换全文") {
                     menuOpen = false
                     val clip = readClipboard(context)
-                    if (clip.isNotEmpty()) text = clip
+                    if (clip.isNotEmpty()) {
+                        val ex = CodeExtract.extract(clip)
+                        if (ex.stripped) toast(context, "已自动提取代码块，忽略说明文字")
+                        text = ex.code
+                    } else {
+                        toast(context, "剪贴板是空的")
+                    }
                 },
                 SheetAction("删除", danger = true, icon = Icons.Filled.Delete) { menuOpen = false; deleteOpen = true },
             ),
@@ -327,11 +413,18 @@ fun EditorScreen(
     }
 }
 
+/** One-line banner above the preview: what we guessed, what went wrong. */
+private data class Hint(val message: String, val action: String, val onClick: () -> Unit)
+
 @Composable
 private fun PreviewPane(
     content: PreviewContent,
     reloadKey: Long,
     background: Color,
+    fontSize: Int,
+    scrollY: Int,
+    onScroll: (Int) -> Unit,
+    onRenderInfo: (RenderInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pal = AppTheme.colors
@@ -340,11 +433,14 @@ private fun PreviewPane(
             page = content.page,
             reloadKey = reloadKey,
             background = background,
+            onRenderInfo = onRenderInfo,
             modifier = modifier,
         )
 
         is PreviewContent.Source -> Column(modifier.background(pal.codeBg)) {
-            if (content.formatted) {
+            val strip = content.note
+                ?: if (content.formatted) "已自动格式化（原文未改动）" else null
+            if (strip != null) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -352,13 +448,16 @@ private fun PreviewPane(
                         .padding(horizontal = 14.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("已自动格式化（原文未改动）", color = pal.faint, fontSize = 10.5.sp)
+                    Text(strip, color = pal.faint, fontSize = 10.5.sp)
                 }
             }
             CodeView(
                 text = content.text,
                 lang = content.lang,
                 pal = pal,
+                fontSize = fontSize,
+                scrollY = scrollY,
+                onScroll = onScroll,
                 modifier = Modifier.fillMaxSize(),
             )
         }

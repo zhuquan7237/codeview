@@ -57,6 +57,8 @@ fun HomeScreen(
     version: Int,
     onOpen: (String) -> Unit,
     onNew: () -> Unit,
+    onImport: () -> Unit,
+    onPasteCreate: () -> Unit,
     onChanged: () -> Unit,
     onShare: (String) -> Unit,
 ) {
@@ -75,21 +77,29 @@ fun HomeScreen(
 
     Box(Modifier.fillMaxSize().background(pal.bg).safeDrawingPadding()) {
         Column(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 4.dp)) {
-                Text(
-                    "CodeView",
-                    color = pal.text,
-                    fontSize = 27.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = (-0.5).sp,
-                )
-                Text(
-                    if (items.isEmpty()) "新建文件，粘贴代码，直接看效果"
-                    else "${items.size} 个文件 · ${FileTypes.formatSize(totalBytes)}",
-                    color = pal.faint,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "CodeView",
+                        color = pal.text,
+                        fontSize = 27.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = (-0.5).sp,
+                    )
+                    Text(
+                        if (items.isEmpty()) "新建文件，粘贴代码，直接看效果"
+                        else "${items.size} 个文件 · ${FileTypes.formatSize(totalBytes)}",
+                        color = pal.faint,
+                        fontSize = 12.5.sp,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+                Pill("导入", onClick = onImport)
+                Spacer(Modifier.width(8.dp))
+                Pill("剪贴板", onClick = onPasteCreate)
             }
 
             if (items.size >= 2) {
@@ -143,10 +153,14 @@ fun HomeScreen(
                 ) {
                     EmptyState(
                         title = if (items.isEmpty()) "还没有文件" else "没有匹配的文件",
-                        subtitle = if (items.isEmpty()) "新建一个 .svg / .html / .xml 文件，把 AI 给的代码粘进去就能预览。"
+                        subtitle = if (items.isEmpty())
+                            "新建一个文件，把 AI 给的代码粘进去就能预览；已有的文件也可以直接导入。"
                         else "换个关键词试试。",
                     ) {
-                        Pill(text = "新建文件", selected = true, onClick = onNew)
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            Pill(text = "新建文件", selected = true, onClick = onNew)
+                            Pill(text = "导入文件", onClick = onImport)
+                        }
                     }
                 }
             } else {

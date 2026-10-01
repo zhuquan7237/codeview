@@ -10,6 +10,18 @@ data class CodeItem(val name: String, val size: Long, val modified: Long) {
     val kind: FileKind get() = FileTypes.kindOf(ext)
 }
 
+/** Outcome of pulling a file in from outside the app (picker / share sheet). */
+sealed interface ImportResult {
+    data class Ok(val name: String) : ImportResult
+    data object TooLarge : ImportResult
+    data object Empty : ImportResult
+    data object Binary : ImportResult
+    data object Failed : ImportResult
+}
+
+/** 4 MB: enough for any code pasted out of a chat, small enough to never hurt the phone. */
+const val MAX_IMPORT_BYTES = 4 * 1024 * 1024
+
 /**
  * Flat file store under a single directory. Everything the app creates lives here,
  * so no storage permission is ever needed. Pure java.io => unit testable.
@@ -91,6 +103,42 @@ class FileRepo(private val root: File) {
     }
 
     fun delete(name: String): Boolean = fileFor(name)?.delete() == true
+
+    /**
+     * Pulls an outside file into the store.
+     *
+     * Imported names keep their spelling (a picker gives real names like
+     * `diagram (1).svg`), only characters that are illegal on the filesystem are replaced.
+     */
+    fun importBytes(name: String, bytes: ByteArray): ImportResult {
+        if (bytes.isEmpty()) return ImportResult.Empty
+        if (bytes.size > MAX_IMPORT_BYTES) return ImportResult.TooLarge
+        if (looksBinary(bytes)) return ImportResult.Binary
+        val target = uniqueName(importName(name))
+        return if (write(target, String(bytes, Charsets.UTF_8))) ImportResult.Ok(target) else ImportResult.Failed
+    }
+
+    /** Same, but for text that arrived through a share intent or the clipboard. */
+    fun importText(text: String, baseName: String, ext: String): ImportResult {
+        val clean = FileTypes.composeName(baseName, ext)
+        val target = uniqueName(clean)
+        return if (write(target, text)) ImportResult.Ok(target) else ImportResult.Failed
+    }
+
+    private fun importName(raw: String): String {
+        val cleaned = raw.trim()
+            .replace(Regex("[\\\\/:*?\"<>|\\r\\n\\t]+"), "-")
+            .trim(' ', '.', '-')
+        val fallback = if (cleaned.isEmpty()) "导入文件" else cleaned
+        return if (FileTypes.extensionOf(fallback).isEmpty()) "$fallback.txt" else fallback
+    }
+
+    /** A NUL byte in the head of a text file means it is not text. */
+    private fun looksBinary(bytes: ByteArray): Boolean {
+        val head = minOf(bytes.size, 4096)
+        for (i in 0 until head) if (bytes[i] == 0.toByte()) return true
+        return false
+    }
 
     fun totalSize(): Long = root.listFiles()?.sumOf { if (it.isFile) it.length() else 0L } ?: 0L
 

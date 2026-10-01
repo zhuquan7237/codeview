@@ -12,3 +12,6 @@ captures/
 *.log
 /shots/
 .qrtools/
+.kotlin/
+perf/
+*.salive

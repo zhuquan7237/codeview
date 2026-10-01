@@ -12,8 +12,8 @@ android {
         applicationId = "com.zhuquan.codeview"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
         resourceConfigurations += listOf("zh", "en")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,6 +40,8 @@ android {
     kotlinOptions.jvmTarget = "17"
     buildFeatures {
         compose = true
+        // VERSION_NAME drives the in-app update check (single source of truth).
+        buildConfig = true
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
 }
@@ -58,6 +60,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     testImplementation("junit:junit:4.13.2")
+    // Android ships org.json; the JVM test classpath needs the real thing to parse manifests.
+    testImplementation("org.json:json:20231013")
 
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")

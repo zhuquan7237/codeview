@@ -5,6 +5,11 @@
          Nothing is ever uploaded: the app has no account, no analytics and no server. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- In-app updates: the app downloads the new APK itself and hands it to the
+         system installer. The user still confirms the install — nothing installs silently.
+         Android also asks the user to allow "install unknown apps" for CodeView once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -41,6 +46,17 @@
                 <data android:mimeType="image/svg+xml" />
             </intent-filter>
         </activity>
+
+        <!-- Hands the downloaded APK in cache/updates to the installer without exposing it. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

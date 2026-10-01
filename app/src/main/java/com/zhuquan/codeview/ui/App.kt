@@ -25,13 +25,18 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.zhuquan.codeview.core.CodeExtract
+import com.zhuquan.codeview.core.ReleaseInfo
+import com.zhuquan.codeview.BuildConfig
 import com.zhuquan.codeview.data.DocumentImport
 import com.zhuquan.codeview.data.FileRepo
 import com.zhuquan.codeview.data.ImportResult
 import com.zhuquan.codeview.data.ShareInbox
+import com.zhuquan.codeview.data.Updater
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private const val HOME = "home"
 private const val EDIT = "edit:"
@@ -76,6 +81,97 @@ fun CodeViewApp(repo: FileRepo) {
     var version by remember { mutableStateOf(0) }
     var showNew by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    // --- updates -------------------------------------------------------------
+    // Silent on launch (throttled), and on demand from the footer line. The only
+    // thing the app ever volunteers is a single card, and only when a newer build
+    // really exists.
+    val currentVersion = BuildConfig.VERSION_NAME
+    var update by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    var stage by remember { mutableStateOf(UpdateUiState.Stage.Idle) }
+    var needsPermission by remember { mutableStateOf(false) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var showUpdateSheet by remember { mutableStateOf(false) }
+    val progressFlow = remember { MutableStateFlow(0) }
+    val progress by progressFlow.collectAsState()
+    var downloaded by remember { mutableStateOf<File?>(null) }
+
+    fun checkForUpdate(manual: Boolean) {
+        if (checking) return
+        checking = true
+        scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { Updater.check(currentVersion) }
+            }.getOrNull()
+            checking = false
+            when {
+                result == null || !result.reachable ->
+                    if (manual) toast(context, "检查失败：网络不可达")
+                result.info == null -> {
+                    update = null
+                    if (manual) toast(context, "已是最新版本（$currentVersion）")
+                }
+                else -> {
+                    val found = result.info
+                    val skipped = Updater.dismissed(context) == found.version
+                    // A version the user already waved off stays quiet unless they ask again.
+                    if (!skipped || manual) update = found
+                    if (manual) {
+                        toast(
+                            context,
+                            if (skipped) "发现新版本 ${found.version}（此前已忽略）" else "发现新版本 ${found.version}",
+                        )
+                    }
+                }
+            }
+            Updater.markChecked(context)
+        }
+    }
+
+    fun installDownloaded() {
+        val file = downloaded ?: return
+        if (!Updater.canInstall(context)) {
+            needsPermission = true
+            return
+        }
+        needsPermission = false
+        runCatching { Updater.install(context, file) }.onFailure {
+            updateError = it.message ?: "无法打开安装程序"
+            stage = UpdateUiState.Stage.Failed
+        }
+    }
+
+    fun startDownload() {
+        val info = update ?: return
+        stage = UpdateUiState.Stage.Downloading
+        updateError = null
+        needsPermission = false
+        progressFlow.value = 0
+        scope.launch {
+            val file = try {
+                withContext(Dispatchers.IO) {
+                    Updater.download(context, info) { percent -> progressFlow.value = percent }
+                }
+            } catch (error: Exception) {
+                stage = UpdateUiState.Stage.Failed
+                updateError = "${error.message ?: "下载失败"}（已尝试 ${1 + info.mirrors.size} 个地址）"
+                return@launch
+            }
+            downloaded = file
+            stage = UpdateUiState.Stage.Ready
+            if (Updater.canInstall(context)) {
+                runCatching { Updater.install(context, file) }
+                    .onFailure { updateError = it.message }
+            } else {
+                needsPermission = true
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!Updater.checkedRecently(context)) checkForUpdate(manual = false)
+    }
 
     fun open(newName: String) {
         version++
@@ -159,6 +255,21 @@ fun CodeViewApp(repo: FileRepo) {
                 },
                 onChanged = { version++ },
                 onShare = { shareCode(context, it, repo.read(it)) },
+                updateState = UpdateUiState(
+                    currentVersion = currentVersion,
+                    info = update,
+                    checking = checking,
+                    stage = stage,
+                    progress = progress,
+                    error = updateError,
+                    needsPermission = needsPermission,
+                ),
+                onCheckUpdate = { checkForUpdate(manual = true) },
+                onUpdate = { showUpdateSheet = true },
+                onDismissUpdate = {
+                    update?.let { Updater.dismissVersion(context, it.version) }
+                    update = null
+                },
             )
         } else {
             EditorScreen(
@@ -181,6 +292,24 @@ fun CodeViewApp(repo: FileRepo) {
                 route = EDIT + target
             },
             onDismiss = { showNew = false },
+        )
+    }
+
+    if (showUpdateSheet && update != null) {
+        UpdateSheet(
+            state = UpdateUiState(
+                currentVersion = currentVersion,
+                info = update,
+                checking = checking,
+                stage = stage,
+                progress = progress,
+                error = updateError,
+                needsPermission = needsPermission,
+            ),
+            onStart = { if (stage == UpdateUiState.Stage.Ready) installDownloaded() else startDownload() },
+            onInstall = { installDownloaded() },
+            onSettings = { Updater.openInstallSettings(context) },
+            onDismiss = { showUpdateSheet = false },
         )
     }
 }

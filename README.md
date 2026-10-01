@@ -22,6 +22,7 @@
   - 内容类型和扩展名不符时（比如 `.txt` 里其实是 SVG），顶部会提示「内容像 SVG · 已按 SVG 预览」，并提供「另存为 .svg」。
 - **编辑体验**：语法高亮输入（只重绘改动的那几行）、撤销/重做、自动保存（没有保存按钮）、字号可调、长文件滚动流畅（见下）、编辑/预览切换不丢滚动位置。
 - **文件管理**：搜索、重命名、复制副本、分享代码、删除。
+- **应用内更新**：打开就静默检查一次（6 小时内不重复）；有新版时首页顶部出现一张卡片，点一下 → 下载（带进度）→ 校验 sha256 → 拉起系统安装程序，不用再去仓库下载。更新源有三个（`relay.zhuquan.xyz` Cloudflare 镜像、`cn.zhuquan.xyz:8443` 服务器直连、GitHub Release），自动取能用的那一个；忽略某个版本后它不再提示。
 - **网络**：只有 `INTERNET` 一个权限，用于预览依赖 CDN 的 HTML（Tailwind / ECharts / 字体）。没有账号、没有统计、没有任何后台上传。
 
 ## 性能
@@ -55,6 +56,9 @@ export ANDROID_HOME=<android-sdk>
 ./gradlew.bat :app:assembleRelease    # 产出 app/build/outputs/apk/release/app-release.apk
 ./gradlew.bat :app:testDebugUnitTest  # 单元测试
 ./gradlew.bat :app:connectedAndroidTest  # 真机/模拟器上的 WebView 渲染验证
+
+# 发版：构建 → 推到国内镜像 → 刷新应用内更新清单 → 校验镜像
+./scripts/release.sh 1.2.0 "本版改了什么"
 ```
 
 ## 测试
@@ -69,6 +73,8 @@ export ANDROID_HOME=<android-sdk>
 app/src/main/java/com/zhuquan/codeview/
 ├── MainActivity.kt        入口 + ACTION_SEND（分享进来）
 ├── core/                  纯逻辑：文件类型、语法扫描、格式化、预览页包装、AI 代码提取、撤销栈
-├── data/                  FileRepo：单目录文件存储；DocumentImport：从系统选择器导入；ShareInbox：分享中转
-└── ui/                    Compose 界面 + 平台文本视图（Code.kt）、列表页、编辑页、预览页、新建面板
+│                          以及 AppUpdate：版本比较与更新清单解析（无 Android API，可单测）
+├── data/                  FileRepo：单目录文件存储；DocumentImport：从系统选择器导入；
+│                          ShareInbox：分享中转；Updater：检查/下载/校验/交给安装程序
+└── ui/                    Compose 界面 + 平台文本视图（Code.kt）、列表页、编辑页、预览页、新建面板、更新卡片
 ```

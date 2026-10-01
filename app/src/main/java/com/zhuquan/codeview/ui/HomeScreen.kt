@@ -61,6 +61,10 @@ fun HomeScreen(
     onPasteCreate: () -> Unit,
     onChanged: () -> Unit,
     onShare: (String) -> Unit,
+    updateState: UpdateUiState,
+    onCheckUpdate: () -> Unit,
+    onUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
 ) {
     val pal = AppTheme.colors
     val items = remember(version, repo) { repo.list() }
@@ -100,6 +104,12 @@ fun HomeScreen(
                 Pill("导入", onClick = onImport)
                 Spacer(Modifier.width(8.dp))
                 Pill("剪贴板", onClick = onPasteCreate)
+            }
+
+            if (updateState.info != null) {
+                Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    UpdateBanner(state = updateState, onOpen = onUpdate, onDismiss = onDismissUpdate)
+                }
             }
 
             if (items.size >= 2) {
@@ -161,6 +171,11 @@ fun HomeScreen(
                             Pill(text = "新建文件", selected = true, onClick = onNew)
                             Pill(text = "导入文件", onClick = onImport)
                         }
+                        UpdateFooter(
+                            currentVersion = updateState.currentVersion,
+                            checking = updateState.checking,
+                            onClick = onCheckUpdate,
+                        )
                     }
                 }
             } else {
@@ -171,6 +186,13 @@ fun HomeScreen(
                 ) {
                     items(shown, key = { it.name }) { item ->
                         FileRow(item = item, onClick = { onOpen(item.name) }, onMore = { sheetFor = item.name })
+                    }
+                    item {
+                        UpdateFooter(
+                            currentVersion = updateState.currentVersion,
+                            checking = updateState.checking,
+                            onClick = onCheckUpdate,
+                        )
                     }
                 }
             }

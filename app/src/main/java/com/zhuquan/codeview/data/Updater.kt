@@ -223,10 +223,22 @@ object Updater {
     /** Hands the downloaded file to the system package installer. */
     fun install(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
+        // ACTION_VIEW on an apk can pop a resolver when another installed app also claims
+        // apk files (seen on the QA emulator). ACTION_INSTALL_PACKAGE always resolves to the
+        // system installer, so prefer it and keep ACTION_VIEW as the fallback.
+        val direct = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            data = uri
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val viaView = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
+        val resolved = direct.resolveActivity(context.packageManager) != null
+        try {
+            context.startActivity(if (resolved) direct else viaView)
+        } catch (error: Exception) {
+            context.startActivity(viaView)
+        }
     }
 }

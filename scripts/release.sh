@@ -62,7 +62,23 @@ fi
 
 echo "▸ 校验：手机看到的那份"
 curl -s --noproxy '*' "https://relay.zhuquan.xyz/dl/codeview-latest.json"; echo
-curl -s --noproxy '*' -o build/relay-check.apk "https://relay.zhuquan.xyz/dl/codeview-$VERSION.apk"
+# 覆盖同名文件后 CDN 边缘可能还给旧内容 —— 先清缓存再验，并把 ?cb= 当保险。
+: "${CF_ZONE:=ad700d49156d0c2dec2b1765fe49b152}"
+: "${HERMES_ENV:=C:/Users/zhuquan/AppData/Local/hermes/.env}"
+if [ -f "$HERMES_ENV" ] && [ -n "${CF_API_KEY:-}" -o -s "$HERMES_ENV" ]; then
+  # shellcheck disable=SC1090
+  CF_API_KEY="${CF_API_KEY:-$(grep -m1 '^CF_API_KEY=' "$HERMES_ENV" | cut -d= -f2-)}"
+  CF_API_EMAIL="${CF_API_EMAIL:-$(grep -m1 '^CF_API_EMAIL=' "$HERMES_ENV" | cut -d= -f2-)}"
+  if [ -n "${CF_API_KEY:-}" ]; then
+    echo "▸ 清 Cloudflare 边缘缓存…"
+    curl -s --noproxy '*' -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/purge_cache" \
+      -H "X-Auth-Email: $CF_API_EMAIL" -H "X-Auth-Key: $CF_API_KEY" -H "Content-Type: application/json" \
+      --data "{\"files\":[\"https://relay.zhuquan.xyz/dl/codeview-latest.json\",\"https://relay.zhuquan.xyz/dl/codeview-$VERSION.apk\",\"https://relay.zhuquan.xyz/dl/codeview.apk\"]}" \
+      | grep -o '"success":[a-z]*'
+    sleep 3
+  fi
+fi
+curl -s --noproxy '*' -o build/relay-check.apk "https://relay.zhuquan.xyz/dl/codeview-$VERSION.apk?cb=$(date +%s)"
 RELAY_SHA=$(sha256sum build/relay-check.apk | cut -d' ' -f1)
 if [ "$RELAY_SHA" != "$SHA" ]; then
   echo "✗ 镜像上的 APK 与本地不一致：$RELAY_SHA" >&2
@@ -71,7 +87,9 @@ fi
 echo "✓ 镜像 sha256 一致"
 
 echo
+cp -f "$APK" "build/codeview-$VERSION.apk"
 echo "下一步（GitHub Release + 源码推送）："
 echo "  git add -A && git commit -m \"CodeView $VERSION：$NOTES\""
 echo "  git push origin main --force-with-lease"
-echo "  gh release create v$VERSION \"$APK\" --title \"CodeView $VERSION\" --notes-file release-notes-$VERSION.md"
+echo "  gh release create v$VERSION \"build/codeview-$VERSION.apk\" --title \"CodeView $VERSION\" --notes-file release-notes-$VERSION.md"
+echo "  （重发同一版本：gh release upload v$VERSION build/codeview-$VERSION.apk --clobber）"

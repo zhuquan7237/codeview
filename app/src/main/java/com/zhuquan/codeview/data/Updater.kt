@@ -72,7 +72,8 @@ object Updater {
         var reachable = false
         fun probe(tag: String, url: String, parse: (String) -> ReleaseInfo?) {
             // 只有真的拿到响应才算"网络通"；解析失败（清单格式换了）仍是通。
-            val body = runCatching { get(url) }.getOrElse { error ->
+            // 清单文件名是固定的，CDN 边缘可能给旧内容 —— 带时间戳绕过缓存。
+            val body = runCatching { get(url, bustCache = true) }.getOrElse { error ->
                 android.util.Log.i(TAG, "源[$tag] 失败：${error.javaClass.simpleName}: ${error.message}")
                 null
             } ?: return
@@ -82,14 +83,16 @@ object Updater {
             one?.let(found::add)
         }
         probe("relay", RELAY_MANIFEST) { AppUpdate.parseManifest(it, "relay") }
-        probe("cn", CN_MANIFEST) { AppUpdate.parseManifest(it, "cn") }
         probe("github", GITHUB_LATEST) { AppUpdate.parseGithub(it) }
+        // 8443 直连排最后：只有服务器防火墙放行时它才通，通了才是最快的路。
+        probe("cn", CN_MANIFEST) { AppUpdate.parseManifest(it, "cn") }
 
         val best = AppUpdate.pick(found, current) ?: return@withContext CheckResult(null, reachable)
         val mirrors = buildList {
+            // 先 GitHub 资产（实测手机网络能下），再镜像，最后直连端口。
+            found.filter { it.source == "github" }.forEach { add(it.apkUrl) }
             add(RELAY_APK)
             add(CN_APK)
-            found.filter { it.source == "github" }.forEach { add(it.apkUrl) }
         }.filter { it != best.apkUrl }.distinct()
         android.util.Log.i(TAG, "check：当前=$current 候选=${found.map { it.version }} 采用=${best.version}")
         CheckResult(best.copy(mirrors = mirrors), true)
@@ -181,8 +184,9 @@ object Updater {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun get(url: String): String {
-        val connection = open(url, timeoutMs = 8_000)
+    private fun get(url: String, bustCache: Boolean = false): String {
+        val target = if (bustCache) "$url${if (url.contains('?')) '&' else '?'}t=${System.currentTimeMillis()}" else url
+        val connection = open(target, timeoutMs = 8_000)
         try {
             if (connection.responseCode !in 200..299) throw IOException("HTTP ${connection.responseCode}")
             return connection.inputStream.bufferedReader().use { it.readText() }
